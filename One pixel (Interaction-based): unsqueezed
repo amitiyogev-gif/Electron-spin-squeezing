@@ -1,0 +1,22 @@
+# Install dependencies (only needed in Colab or first-time use)
+!pip install qutip
+
+import numpy as np
+import matplotlib.pyplot as plt
+from qutip import Bloch, basis
+
+# Define two effective qubit states (normalized)
+# State |psi0>: superposition of |0> and |1> (we approximate it here)
+psi0 = (basis(2, 0) + basis(2, 1)).unit()
+
+# State |N, 0>: we map to |0> qubit state
+psi_N0 = basis(2, 0)
+
+# Create Bloch sphere
+b = Bloch()
+b.add_states([psi0, psi_N0])
+b.vector_color = ['r', 'b']
+b.point_color = ['r', 'b']
+b.add_annotation([1, 0, 0], "ψ₀ (red)")
+b.add_annotation([0, 0, 1], "|N,0⟩ (blue)")
+b.show()
