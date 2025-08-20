@@ -1,0 +1,124 @@
+# Bloch-sphere visualization of spin squeezing via one-axis twisting (Jz^2)
+# Works in Google Colab (no special installs needed beyond numpy, matplotlib, scipy)
+
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.linalg import expm
+
+# ---------- Parameters ----------
+N = 40                 # number of pseudo-spins (electrons)
+J = N / 2
+kappa = 0.06           # squeezing strength χ t (try 0.0, 0.05-0.2)
+
+# ---------- Spin-J operators ----------
+def Jz_matrix(J):
+    m_vals = np.arange(int(-J), int(J)+1, 1, dtype=float)
+    return np.diag(m_vals)
+
+def Jplus_matrix(J):
+    dim = int(2*J + 1)
+    M = np.zeros((dim, dim), dtype=complex)
+    for m in range(-int(J), int(J)):
+        jp = np.sqrt((J - m) * (J + m + 1))
+        i = int(m - (-J))
+        M[i, i+1] = jp
+    return M
+
+def Jx_Jy_matrices(J):
+    Jp = Jplus_matrix(J)
+    Jm = Jp.conj().T
+    Jx = 0.5*(Jp + Jm)
+    Jy = -0.5j*(Jp - Jm)
+    return Jx, Jy
+
+# ---------- State preparation ----------
+def rotate_state(J, theta, phi):
+    # |θ,φ> = e^{-i φ Jz} e^{-i θ Jy} |J, J>
+    dim = int(2*J+1)
+    psi0 = np.zeros((dim,1), dtype=complex)
+    psi0[-1,0] = 1.0  # highest weight state |J,J>
+    Jx, Jy = Jx_Jy_matrices(J)
+    Jz = Jz_matrix(J)
+    U = expm(-1j*phi*Jz) @ expm(-1j*theta*Jy)
+    return U @ psi0
+
+def one_axis_twist(J, kappa):
+    Jz = Jz_matrix(J)
+    return expm(-1j * kappa * (Jz @ Jz))
+
+# ---------- Helpers ----------
+def exp_ops(psi, ops):
+    vals = []
+    bra = psi.conj().T
+    for O in ops:
+        vals.append(float(np.real(bra @ (O @ psi))))
+    return vals
+
+def cov_matrix(psi, Jx, Jy, Jz):
+    mx, my, mz = exp_ops(psi, [Jx,Jy,Jz])
+    m = np.array([mx, my, mz])
+    def second(O1, O2):
+        return float(np.real((psi.conj().T @ (O1 @ (O2 @ psi))).item()))
+    S = np.array([[second(Jx,Jx), second(Jx,Jy), second(Jx,Jz)],
+                  [second(Jy,Jx), second(Jy,Jy), second(Jy,Jz)],
+                  [second(Jz,Jx), second(Jz,Jy), second(Jz,Jz)]])
+    C = 0.5*(S+S.T) - np.outer(m,m)
+    mnorm = np.linalg.norm(m)
+    e3 = m / mnorm
+    tmp = np.array([1,0,0]) if abs(e3[0])<0.9 else np.array([0,1,0])
+    e1 = tmp - np.dot(tmp,e3)*e3
+    e1 = e1/np.linalg.norm(e1)
+    e2 = np.cross(e3, e1)
+    E = np.vstack([e1,e2,e3]).T
+    C_loc = E.T @ C @ E
+    C_tangent = C_loc[:2,:2]
+    return m, (e1,e2,e3), C_tangent
+
+def ellipse_points(C2, npts=200, scale=1.0):
+    w, V = np.linalg.eigh(C2)
+    w = np.maximum(w, 0)
+    t = np.linspace(0, 2*np.pi, npts)
+    circ = np.vstack([np.cos(t), np.sin(t)])
+    ell = V @ (np.sqrt(w)[:,None] * circ) * scale
+    return ell
+
+def plot_bloch_with_ellipse(m, basis, C_tangent, title):
+    fig = plt.figure(figsize=(7,7))
+    ax = fig.add_subplot(111, projection='3d')
+    # Bloch sphere
+    u = np.linspace(0, 2*np.pi, 60)
+    v = np.linspace(0, np.pi, 30)
+    xs = np.outer(np.cos(u), np.sin(v))
+    ys = np.outer(np.sin(u), np.sin(v))
+    zs = np.outer(np.ones_like(u), np.cos(v))
+    ax.plot_wireframe(xs, ys, zs, linewidth=0.3, alpha=0.4)
+    # Mean spin vector
+    ax.plot([0, m[0]/J], [0, m[1]/J], [0, m[2]/J], linewidth=2)
+    # Uncertainty ellipse at tip
+    e1, e2, e3 = basis
+    ell2d = ellipse_points(C_tangent, scale=1.0/np.sqrt(J))
+    tip = (m/J)
+    pts3 = (tip[:,None] + e1[:,None]*ell2d[0] + e2[:,None]*ell2d[1]).T
+    ax.plot(pts3[:,0], pts3[:,1], pts3[:,2], linewidth=2)
+    ax.set_xlim([-1,1]); ax.set_ylim([-1,1]); ax.set_zlim([-1,1])
+    ax.set_title(title)
+    ax.set_box_aspect([1,1,1])
+    plt.show()
+
+# ---------- Build operators ----------
+Jx, Jy = Jx_Jy_matrices(J)
+Jz = Jz_matrix(J)
+
+# ---------- Initial state: CSS along +x (50/50) ----------
+psi_css = rotate_state(J, theta=np.pi/2, phi=0.0)
+
+# ---------- Apply one-axis twisting ----------
+U_oat = one_axis_twist(J, kappa)
+psi_sq = U_oat @ psi_css
+
+# ---------- Plot results ----------
+m_css, basis_css, C_css = cov_matrix(psi_css, Jx, Jy, Jz)
+plot_bloch_with_ellipse(m_css, basis_css, C_css, "Unsqueezed CSS (50/50)")
+
+m_sq, basis_sq, C_sq = cov_matrix(psi_sq, Jx, Jy, Jz)
+plot_bloch_with_ellipse(m_sq, basis_sq, C_sq, "Spin-squeezed state")
