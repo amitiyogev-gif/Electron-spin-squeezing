@@ -1,0 +1,30 @@
+# two_pixels_dotgrid.py
+import numpy as np
+import matplotlib.pyplot as plt
+
+def random_coeffs(N, seed=0):
+    rng = np.random.default_rng(seed)
+    C = rng.normal(size=(N+1,N+1)) + 1j*rng.normal(size=(N+1,N+1))
+    mask = np.fromfunction(lambda i,j: (i+j)<=N, C.shape, dtype=int)
+    Z = np.sum(np.abs(C[mask])**2)
+    return np.where(mask, C/np.sqrt(Z), 0.0)
+
+def plot_dot_grid(P):
+    N = P.shape[0]-1
+    xs, ys, cs = [], [], []
+    for n1 in range(N+1):
+        for n2 in range(N+1):
+            if n1+n2<=N and not np.isnan(P[n1,n2]):
+                xs.append(n1); ys.append(n2); cs.append(P[n1,n2])
+    fig, ax = plt.subplots()
+    sc = ax.scatter(xs, ys, c=cs, s=80, edgecolors='k')
+    ax.set_xlabel('# of e⁻ in pixel 1'); ax.set_ylabel('# of e⁻ in pixel 2')
+    plt.colorbar(sc, ax=ax).set_label('Probability |c|²')
+    plt.show()
+
+if __name__ == "__main__":
+    N = 10
+    C = random_coeffs(N)
+    P = np.abs(C)**2
+    P[P==0] = np.nan
+    plot_dot_grid(P)
