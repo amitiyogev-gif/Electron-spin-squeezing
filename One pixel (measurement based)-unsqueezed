@@ -1,0 +1,29 @@
+# one_pixel_unsqueezed_bloch.py
+import numpy as np
+import qutip as qt
+import matplotlib.pyplot as plt
+from qutip import Bloch # Corrected import
+
+def collective_ops(N):
+    j = N/2
+    return qt.jmat(j, 'x'), qt.jmat(j, 'y'), qt.jmat(j, 'z')
+
+def spin_coherent_x(N):
+    return qt.spin_coherent(N/2, np.pi/2, 0, type='ket')
+
+if __name__ == "__main__":
+    N = 20
+    Jx, Jy, Jz = collective_ops(N)
+    psi = spin_coherent_x(N)  # spin coherent along +x (unsqueezed)
+    rho = psi * psi.dag()
+
+    # Bloch vector = expectation values of Pauli/collective spin normalized
+    bx = qt.expect(Jx, rho) / (N/2)
+    by = qt.expect(Jy, rho) / (N/2)
+    bz = qt.expect(Jz, rho) / (N/2)
+
+    b = Bloch()
+    b.add_vectors([[bx, by, bz]]) # Corrected: add_vectors expects a list of vectors
+    b.xlabel, b.ylabel, b.zlabel = ['Jx', 'Jy', 'Jz']
+    b.title = "Unsqueezed state (one-pixel)"
+    b.show()
