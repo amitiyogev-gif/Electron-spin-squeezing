@@ -1,0 +1,42 @@
+# two_pixels_ternary.py
+import numpy as np
+import matplotlib.pyplot as plt
+
+def random_coeffs(N, seed=0):
+    rng = np.random.default_rng(seed)
+    C = rng.normal(size=(N+1,N+1)) + 1j*rng.normal(size=(N+1,N+1))
+    mask = np.fromfunction(lambda i,j: (i+j)<=N, C.shape, dtype=int)
+    Z = np.sum(np.abs(C[mask])**2)
+    return np.where(mask, C/np.sqrt(Z), 0.0)
+
+def _bary_to_xy(n0, n1, n2):
+    N = n0+n1+n2
+    b0, b1, b2 = n0/N, n1/N, n2/N
+    x = b1 + 0.5*b2
+    y = (np.sqrt(3)/2)*b2
+    return x, y
+
+def plot_ternary(P):
+    N = P.shape[0]-1
+    xs, ys, cs = [], [], []
+    for n1 in range(N+1):
+        for n2 in range(N+1):
+            if n1+n2<=N and not np.isnan(P[n1,n2]):
+                n0 = N-n1-n2
+                x,y = _bary_to_xy(n0,n1,n2)
+                xs.append(x); ys.append(y); cs.append(P[n1,n2])
+    fig, ax = plt.subplots()
+    sc = ax.scatter(xs, ys, c=cs, s=80, edgecolors='k')
+    tri = np.array([[0,0],[1,0],[0.5,np.sqrt(3)/2],[0,0]])
+    ax.plot(tri[:,0],tri[:,1],'k-')
+    ax.set_aspect('equal'); ax.set_xticks([]); ax.set_yticks([])
+    plt.colorbar(sc, ax=ax).set_label('Probability |c|²')
+    ax.set_title("Two-pixel ternary view")
+    plt.show()
+
+if __name__ == "__main__":
+    N = 10
+    C = random_coeffs(N)
+    P = np.abs(C)**2
+    P[P==0] = np.nan
+    plot_ternary(P)
