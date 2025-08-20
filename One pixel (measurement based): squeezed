@@ -1,0 +1,152 @@
+# one_pixel_squeezed_bloch_uncertainty.py
+# Plots a squeezed collective-spin state on a Bloch sphere and overlays
+# a tangent-plane uncertainty ellipse computed from the spin covariance.
+
+import numpy as np
+import qutip as qt
+from qutip import Bloch # Corrected import statement
+
+# ---------- helpers ----------
+def collective_ops(N: int):
+    """Collective spin operators Jx, Jy, Jz for j=N/2 in the symmetric subspace."""
+    j = N / 2.0
+    return qt.jmat(j, 'x'), qt.jmat(j, 'y'), qt.jmat(j, 'z')
+
+def spin_coherent_x(N: int):
+    """Spin-coherent state pointing along +x."""
+    return qt.spin_coherent(N/2.0, np.pi/2, 0.0, type='ket')
+
+def weak_Jz_measurement(psi: qt.Qobj, Jz: qt.Qobj, kappa: float = 0.2, outcome: float = 0.0):
+    """
+    Single-pixel Gaussian weak measurement of Jz conditioned on 'outcome'.
+    Kraus: K ∝ exp[-(Jz - y)^2 / (4 σ^2)], with σ = 1/sqrt(2 κ).
+    """
+    if kappa <= 0:
+        return psi.unit()
+    dim = Jz.dims[0][0]
+    I = qt.qeye(dim)
+    sigma = 1.0 / np.sqrt(2.0 * kappa)
+    A = (Jz - outcome * I)
+    K = (-(A ** 2) / (4.0 * sigma ** 2)).expm()
+    post = (K * psi)
+    # Normalize (since K is non-unitary)
+    return (post / post.norm()).unit()
+
+def mean_spin_vector(rho: qt.Qobj, Jx: qt.Qobj, Jy: qt.Qobj, Jz: qt.Qobj, N: int):
+    """Return Bloch vector m = <J>/j (so pure coherent states have |m|≈1)."""
+    j = N / 2.0
+    mx = qt.expect(Jx, rho) / j
+    my = qt.expect(Jy, rho) / j
+    mz = qt.expect(Jz, rho) / j
+    return np.array([mx, my, mz], dtype=float)
+
+def tangent_frame_from_vector(n: np.ndarray):
+    """Orthonormal basis (u, v, n̂) where u,v span the plane ⟂ n̂."""
+    n = np.asarray(n, float)
+    n_norm = np.linalg.norm(n)
+    if n_norm < 1e-12:
+        # degenerate (fully mixed). Just choose z as normal.
+        n_hat = np.array([0.0, 0.0, 1.0])
+    else:
+        n_hat = n / n_norm
+    # pick a stable reference to build u
+    ref = np.array([0.0, 0.0, 1.0]) if abs(n_hat[2]) < 0.9999 else np.array([1.0, 0.0, 0.0])
+    u = np.cross(n_hat, ref)
+    u_norm = np.linalg.norm(u)
+    if u_norm < 1e-12:
+        ref = np.array([0.0, 1.0, 0.0])
+        u = np.cross(n_hat, ref)
+        u_norm = np.linalg.norm(u)
+    u /= u_norm
+    v = np.cross(n_hat, u)
+    return u, v, n_hat
+
+def cov_in_tangent_plane(rho: qt.Qobj, Jx: qt.Qobj, Jy: qt.Qobj, Jz: qt.Qobj, n_hat: np.ndarray, N: int):
+    """
+    Build operators J_u = u·J and J_v = v·J for u,v in the plane ⟂ n̂, then
+    return the 2×2 covariance matrix Cov(J_u, J_v).  Units are spin units.
+    """
+    u, v, _ = tangent_frame_from_vector(n_hat)
+    Ju = u[0]*Jx + u[1]*Jy + u[2]*Jz
+    Jv = v[0]*Jx + v[1]*Jy + v[2]*Jz
+    ops = [Ju, Jv]
+    means = np.array([qt.expect(O, rho) for O in ops], float)
+    cov = np.zeros((2, 2), float)
+    for i, A in enumerate(ops):
+        for j, B in enumerate(ops):
+            cov[i, j] = 0.5 * qt.expect(A*B + B*A, rho) - means[i]*means[j]
+    return cov  # spin units
+
+def ellipse_points_on_bloch(center: np.ndarray,
+                            cov_tan: np.ndarray,
+                            N: int,
+                            n_pts: int = 256,
+                            ellipse_scale: float = 1.0,
+                            project_to_sphere: bool = True):
+    """
+    Convert 2D covariance in the tangent plane into a small ellipse around 'center' on the Bloch sphere.
+
+    Mapping: δm ≈ (1/j) * E * r(θ), where E diagonalizes cov and j=N/2.
+    'ellipse_scale' multiplies the radii if you need a more visible ellipse.
+    """
+    j = N / 2.0
+    # Guard against small negative eigenvalues due to numerics
+    vals, vecs = np.linalg.eigh(0.5*(cov_tan + cov_tan.T))
+    vals = np.clip(vals, 0.0, None)
+
+    # Parametric 2D ellipse in the (u,v) basis of the tangent plane
+    t = np.linspace(0, 2*np.pi, n_pts, endpoint=True)
+    unit_circle = np.stack([np.cos(t), np.sin(t)], axis=0)  # shape (2, n_pts)
+    radii = np.sqrt(vals)[:, None] / j * ellipse_scale      # convert spin units -> Bloch coords
+    ell2d = (vecs @ (radii * unit_circle))                  # shape (2, n_pts)
+
+    # Lift to 3D using the tangent basis at 'center'
+    u, v, n_hat = tangent_frame_from_vector(center)
+    pts = (center[:, None]
+           + u[:, None]*ell2d[0]
+           + v[:, None]*ell2d[1])                           # shape (3, n_pts)
+
+    if project_to_sphere:
+        # Re-project to the sphere with radius |center|
+        r = np.linalg.norm(center)
+        norms = np.linalg.norm(pts, axis=0)
+        norms[norms < 1e-12] = 1.0
+        pts = pts * (r / norms)[None, :]
+    return pts  # shape (3, n_pts)
+
+# ---------- main ----------
+if __name__ == "__main__":
+    # ----- parameters you can tune -----
+    N = 20          # number of electrons (collective spin j=N/2)
+    kappa = 0.20    # measurement strength (bigger -> more squeezing)
+    outcome = 0.0   # pixel readout value to condition on
+    ellipse_scale = 2.0  # purely visual: 1.0..3.0 makes the ellipse easy to see
+    # -----------------------------------
+
+    # Build squeezed state by conditioning on weak Jz measurement
+    Jx, Jy, Jz = collective_ops(N)
+    psi0 = spin_coherent_x(N)                     # start along +x
+    psi_sq = weak_Jz_measurement(psi0, Jz, kappa=kappa, outcome=outcome)
+    rho = psi_sq * psi_sq.dag()
+
+    # Mean spin (Bloch vector) and local covariance in the perpendicular plane
+    m = mean_spin_vector(rho, Jx, Jy, Jz, N)      # in Bloch coords
+    cov_tan = cov_in_tangent_plane(rho, Jx, Jy, Jz, m, N)
+
+    # Build ellipse points in 3D
+    ellipse_xyz = ellipse_points_on_bloch(m, cov_tan, N,
+                                          n_pts=300,
+                                          ellipse_scale=ellipse_scale,
+                                          project_to_sphere=True)
+
+    # Draw Bloch sphere
+    b = Bloch()
+    # optional cosmetics (no per-call color args; set properties before add_*)
+    b.vector_width = 4
+    b.point_size = [12]
+    # Add mean-spin vector and ellipse (as a connected polyline)
+    b.add_vectors(m.tolist())
+    b.add_points(ellipse_xyz, meth='l')  # 3×N array, drawn as a line
+    b.xlabel, b.ylabel, b.zlabel = ['Jx', 'Jy', 'Jz']
+    b.title = f"Squeezed state (one-pixel measurement, κ={kappa})"
+    b.show()
